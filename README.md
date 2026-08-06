@@ -1,41 +1,44 @@
-# 06pwmSoftware - STC8H8K64U Bare Metal
+# 07pwmSoftware_Efectos - STC8H8K64U Bare Metal
 
-PWM por software con desvanecimiento suave (breathing) para LED en P2.0.  
+Tres efectos de luz (Ola, Latido, Ráfaga) para 5 LEDs con PWM por software.  
 Implementado con Timer0 e ISR en SDCC sobre Linux para STC8H8K64U @ 24MHz.
 
 ## Filosofía de Trabajo
 
-- **Cero abstracciones:** Sin HAL, Arduino ni librerías PWM específicas.
+- **Cero abstracciones:** Sin HAL, Arduino ni librerías PWM/LED específicas.
 - **PWM por software transparente:** Generación visible y depurable en ISR.
-- **Sintaxis SDCC pura:** `__sfr __at()` y `__sbit __at()` en lugar de sintaxis Keil.
-- **ISR mínima:** Solo comparación + conteo base tiempo. Lógica de efecto en superloop.
-- **Un solo timer:** Timer0 genera PWM (~1kHz) Y base de tiempo para desvanecimiento (~10ms).
+- **ISR desrollada:** 5 comparaciones explícitas, sin bucles ni indexación dinámica.
+- **Tipos seguros:** Cálculos intermedios en `uint16_t` para evitar overflow silencioso.
+- **Un solo timer:** Timer0 genera PWM (~500Hz) Y base de tiempo para efectos (~40ms).
 - **Verificación primaria:** Direcciones SFR validadas contra Reference Manual oficial (2022/3/9).
 - **Ambiente 100% Linux:** SDCC + stcgal + Makefile + Bash.
 
 ## Hardware
 
-- MCU: STC8H8K64U @ 24MHz (configuración de fábrica, modo 12T forzado explícitamente)
-- LED: P2.0 en configuración sink (5V → LED → R → Pin), modo cuasi-bidireccional
+- MCU: STC8H8K64U @ 24MHz (modo 12T forzado explícitamente vía AUXR.T0x12=0)
+- LEDs: P2.0-P2.4 en configuración sink (5V → LED → R → Pin), modo cuasi-bidireccional
 - Programador: Adaptador USB-TTL PL2303 conectado a UART0 del MCU
-- Clock Timer0: FOSC/12 = 2MHz (AUXR.T0x12 = 0 forzado)
+- Clock Timer0: FOSC/12 = 2MHz
 
-## Comportamiento
+## Efectos Disponibles
 
-- LED realiza ciclo de desvanecimiento: brillo sube de 0→255 y baja de 255→0 suavemente
-- Frecuencia PWM: ~1kHz (período 1.024ms, 256 pasos de 4µs)
-- Velocidad de desvanecimiento: ~2.5 segundos ida, ~2.5 segundos vuelta
-- Resolución: 256 niveles de brillo (8 bits nativos)
+| Efecto | Descripción | Patrón Temporal |
+|--------|-------------|-----------------|
+| **Ola** | Onda triangular viajera LED0→LED4→LED0 | Ciclo ~1.7s, desfase 51 unidades entre LEDs |
+| **Latido** | Latido asimétrico sincronizado (subida rápida/bajada lenta) | Ciclo 2s, pico en 25% del ciclo |
+| **Ráfaga** | Pulso secuencial LED0→LED4 con decaimiento | Ciclo 5s, pulso 8 ticks + decaimiento 12 ticks |
+
+Seleccionar efecto descomentando UNA línea en el superloop de `main()`.
 
 ## Estructura del Proyecto
 
-06pwmSoftware/
-├── 06pwmSoftware.c   # Código principal con ISR PWM + desvanecimiento
-├── stc8h.h                     # Direcciones SFR verificadas (P2 + Timer0 + IE)
-├── Makefile                    # Compilación y grabación vía PL2303
-├── README.md                   # Este archivo
-├── License.txt                 # UNLICENSE (dominio público, bilingüe)
-└── .gitignore                  # Exclusión de binarios y temporales
+07pwmSoftware_Efectos/
+├── 07pwmSoftware_Efectos.c     # Código principal con ISR PWM + 3 efectos
+├── stc8h.h                 # Direcciones SFR verificadas (P2 + Timer0 + IE)
+├── Makefile                # Compilación y grabación vía PL2303
+├── README.md               # Este archivo
+├── License.txt             # UNLICENSE (dominio público, bilingüe)
+└── .gitignore              # Exclusión de binarios y temporales
 
 
 ## Requisitos
@@ -47,27 +50,21 @@ Implementado con Timer0 e ISR en SDCC sobre Linux para STC8H8K64U @ 24MHz.
 
 ## Uso
 
-# Compilar
-make
-
-# Grabar en el microcontrolador vía PL2303
-make flash
-
-# Limpiar archivos generados
-make clean
+make          # Compilar
+make flash    # Grabar vía PL2303
+make clean    # Limpiar artefactos
 
 Notas Técnicas
 
-    PWM por software: La ISR compara pwm_ciclo (0-255) vs brillo_actual cada 4µs. Si ciclo < brillo → LED ON; sino → LED OFF. Duty cycle proporcional al valor de brillo.
-    Overflow natural de uint8_t: pwm_ciclo++ se desborda de 255→0 automáticamente. No requiere reset manual. Eficiente y transparente.
-    Base de tiempo derivada: El mismo overflow de pwm_ciclo (cada 256 ticks ≈ 1ms) cuenta 10 ciclos para actualizar brillo cada ~10ms. Un solo timer, dos funciones.
-    AUXR.T0x12 = 0 forzado: Garantiza modo 12T independientemente del estado previo del chip. Nunca confiar en defaults.
-    Recarga Timer0: 4µs @ 2MHz = 8 ticks → 65536-8 = 65528 = 0xFFF8.
-    ISR mínima: Solo comparación, incremento y chequeo de contador. Cero llamadas a función, cero lógica compleja.
+    ISR desrollada: 5 comparaciones if (pwm_ciclo < brillo[n]) generan ~15 ciclos máquina. Sin bucles, sin punteros, sin indexación dinámica. Latencia predecible.
+    Timing ajustado: 8µs por tick (recarga 0xFFF0) da margen seguro para 5 comparaciones. PWM resultante ~500Hz (invisible al ojo), refresh efectos 40ms (25Hz, suave).
+    uint16_t para cálculos: Evita warning 94/126 de SDCC. Clamp funcional tras cálculo intermedio seguro. Conversión explícita a uint8_t tras validar rango.
+    Desfase espacial: Ola usa offset 51 (255/5), Ráfaga usa offset 50 ticks (250/5). Ambos cubren exactamente el rango/ciclo sin residuos.
+    Módulo solo en superloop: (fase + offset) % 250 en efecto Ráfaga está en superloop, NUNCA en ISR. En 8051 compila a resta condicional, no división hardware.
+    Configuración masiva GPIO: P2M1 &= ~0x1F configura 5 pines en UNA operación read-modify-write.
 
-Referencias
+    Referencias
 
     STC8H Reference Manual (2022/3/9)
     SDCC Compiler User Guide
     stcgal Documentation
-
