@@ -1,0 +1,24 @@
+# Archivos generados por SDCC
+*.ihx
+*.hex
+*.lst
+*.asm
+*.sym
+*.map
+*.rel
+*.rst
+
+# Archivos temporales de editores
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Archivos de sistema Linux
+.DS_Store
+Thumbs.db
+
+# Binarios compilados manualmente
+*.out
+*.bin
